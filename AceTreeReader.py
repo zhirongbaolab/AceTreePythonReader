@@ -7,6 +7,7 @@ Created on Fri Jul 18 14:20:09 2025
 import networkx as nx
 from zipfile import ZipFile
 import pandas as pd
+import csv
 import xml.etree.ElementTree as ET
 
 #acetree file reader first implementation in python to my knowlege 2025 Janelia Hackathon
@@ -59,27 +60,61 @@ class AceTreeReader:
     #(acetree files of certain vintages have dummy empty nuclei files for later timepoints up to a 'max' and subset by time is common use )
     
     def readFiles(self,basepath,endtime):
-        #read metadata
-        #look in xml file for image config, location of zip file, resolution
-        #should I look in auxinfo or auxinfo2 file for cannonical orientation, right now noplace to put this graph level info?
+        """
+        Loads a set of AceTree files into a networkx graph preserving all nuclei file columns as node attributes
+        loads .xml (which specifies resolution and image location and auxinfo.csv (which specifies centroid and orientation for naming) attaches these as graph attributes
+        Args:
+            basepath (str): The path and root name of all3 files
+            endtime (int): timepoint to load till
+    
+        Returns:
+            networkx.classes.graph.Graph: a graph representing the lineage data in the acetree file with all metadata attched as graph attributes
+        """
         #read zip file into network x graph
         mygraph=self.readAceTree(basepath+'.zip',endtime)
+     
+        #read metadata
+        #look in xml file for image config, location of zip file, resolution
+        #should I look in auxinfo or auxinfo2 file for cannonical orientation, right now noplace to put this graph level info?   
         metadata=self.readAceTreeXML(basepath+'.xml')
+        mygraph.graph.update(metadata)
         #todo check for Auxinfov2.csv with different semantics? very rare use case
         embryometadata=self.readAceTreeCSV(basepath+'AuxInfo.csv')
-        # to do add all metadata to graph
+        mygraph.graph.update(embryometadata)
         return mygraph
     
     def readAceTreeXML(self,filename):
+        #right now this just creates dictionary of top level entries
+        #to do flatten this really parsing each leaf
+        leaf_tags={}
         tree = ET.parse(filename)
-        
-        #to do actually parse xml file, which has different tags based on version
-        #just pass them back
-        return 
+        root = tree.getroot()
+        #leaf_tags = set()  # Use a set to store unique leaf tags
+        for elem in root.iter():
+             if not list(elem):  # Check if the element has no children
+                 leaf_tags[elem.tag]=elem.attrib
+
+        return leaf_tags
+
     
     def readAceTreeCSV(self, filename):
-        #to do read csv
-        return None
+        """
+        Converts a CSV file with one data row and headers into a Python dictionary.
+    
+        Args:
+            filepath (str): The path to the CSV file.
+    
+        Returns:
+            dict: A dictionary representing the single data row, with headers as keys.
+                  Returns an empty dictionary if the file is empty or only contains headers.
+        """
+        with open(filename, 'r', newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                return row  # Returns the first (and only) data row as a dictionary
+        return {} # Return empty dict if no data rows found
+
+
     #to add 
     def createRowDictionary(self,row):
         rowdictionary={}
@@ -89,9 +124,9 @@ class AceTreeReader:
     
     #function for initializing detectiondatamanger from AceTree zip file
     def readAceTree(self,file,endtime):
+        #add nodes
         acetreelineage=nx.Graph()
         addednodes={}#used to keep track of all unique in data nodes IDs and their acetree, unique per frame IDS
-        #try:
         c=0 #keep track of index 
         with ZipFile(file) as myzip:   
             for t in range(endtime):
@@ -107,20 +142,24 @@ class AceTreeReader:
                             addednodes[thiskey]=c
                             c=c+1
                 
-        #except Exception as e:
-        #    print(f"Error reading with explicit zipfile open: {e}")
         #now that the nodes are all in graph need to add backward link for each non -1 pred, by finding 
         #unique node with t=t-1 and ID predID
         #so as not to search for them I made a list of concatenated t_ID for each cell as made it and keept a list
         for node in acetreelineage.nodes():
             pred=acetreelineage.nodes[node]['predecessorID']
             if not pred==-1:
+           
                 #key for t-1 and ID from pred
                 thiskey=str(acetreelineage.nodes[node]['t']-1)+str(acetreelineage.nodes[node]['predecessorID'])
                 #look up what node was added that matched this time ID signature
                 if not (thiskey==None):
+                    #check if weird bug where edges link to deleted nodes just drop the edge from networkX if so
                     predc=addednodes[thiskey] #
-                    acetreelineage.add_edge(node,predc)
+                    isvalidedge= acetreelineage.nodes[node]['valid']==1 and acetreelineage.nodes[predc]['valid']==1
+                    if isvalidedge:
+                        acetreelineage.add_edge(node,predc)
+                    else:
+                        print('warning valid node pointing to invalid, this shouldnt happen but does on occasion-a longstanding mystery.')
                 else:
-                    print('should never have a pred reference a nonexistent node ID')
+                    raise Exception('should never have a pred reference a nonexistent node ID')
         return acetreelineage
