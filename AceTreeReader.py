@@ -10,7 +10,7 @@ import pandas as pd
 import csv
 import xml.etree.ElementTree as ET
 
-#acetree file reader first implementation in python to my knowlege 2025 Janelia Hackathon
+#acetree file reader in python  2025 Janelia Hackathon
 #to avoid dependency on SNIII prototype creates a simple network x graph with all Acetree data as node tags
 #note that it faithfully adds fields for EVERY acetree column as node attributes
 #Note that this includes those specifying network topology but these are redundant
@@ -19,13 +19,16 @@ import xml.etree.ElementTree as ET
 #(undocumented) beehavior of Acetree which ignores redundant successor fields 
 #when building its internal representation of the on disk data structure
 
-#note a known bug that some AceTree generated lineages contain an edge to a 
-#deleted node. This loader silently corrects any errors of this sort by 
-#respecting Acetree semanitcs by refusing to make edges between invalid nodes 
-# they seem to correspond to what should be roots of independent subtrees and so are treated as such, but buyer beware
-# todo all xml and AuxInfo.csv tags should added as graph level attributes
+#note a known bug that some AceTree edited lineages contain an edge to a 
+#deleted node. This loader silently corrects any errors of this sort with warning by 
+#  by refusing to make edges between invalid nodes 
+# FYI these errors SEEM to correspond to what should be roots of independent subtrees and so are treated as such, but buyer beware
 
 class AceTreeReader:
+    """
+      Loader that makes networkX graph from AceTree .zip file
+      see code for long commentary on obscure historical nature of fields
+      """
     #pasted below is cannonical historical explanation of acetree column meanings
     #1(cell ID specific to this file, not always the same as row number), 1(validity flag: 1 valid, 0 invalid (a cell deleted in acetree)), 
     #24 (predecessor ID in previous file), 45(successor ID in next file), -1(successor 2 id in next file), 
@@ -34,20 +37,33 @@ class AceTreeReader:
     #0(global correction), 0(local correction), 0(blot correction), 0("crosstalk" correction),}
     #below is an example from a real expression containing file  
     #4, 1, -1, 4, -1, 444, 343, 26.0, 25, Nuc26360, 65535, 1523178, 3308342, 2172, , 1523178, 25000, 1522646, 1522646, 0, 
-    # dictionary giving the column indicies and data name in each AceTree timepoint file column
     
-    # note many of these columns are historical in nature and seldom used in common practice
+    # note many of these columns are historical in nature and seldom used in common current practice
     #of note 'valid' which if zero indicates the detection was marked as deleted
     #forcedAceTreeName which indicates a node name that has been manually set in Acetree
     #and indictates to Acetree to skip automated naming and use this name going forwad
     #intensity* values may or may not reflect lineaging marker intensity and should not be relied on
-    #expIntensity* values will either be all zero, all empty, or reflect expression within detection mask
+    #expIntensity* values will either be all zero, all empty, or reflect expression within detection masks
     # some of these values are obscure in nature, and appear to be arbitrary constants but 
     #in all publications I'm aware of expression is measured as: 
     # expIntensity-expBlotCorrection 
     # this implements the subtraction of a mean background based on a halo computed by acebatch2.jar (Murray at al Nature Methods 2008  doi: 10.1038/nmeth.1228)
     # I think that the units are mean intensity in the mask times an arbitrary constant (1000?) i.e. 'Boyle' (of sainted memory) units
 
+    #similarly xml file is a mix of used and historical elements
+    #the image file is most often historical exemplar single slice image, if not found acetree searches in
+    #the directory up for single timepoint per tiff files
+    #these files are cropped and flipped before display automatically though newer acetree files have expliit tags
+    #that independently indicate if cropping and splitting should be performed 
+    #todo might be nice to implement this filename conversion
+    #endtime is a max endtime that should be accurate resolution is used but endplane is not
+    #blot specifies the expression correction used in displayed values, polar body info is for an obsolete acetree feature. 
+    
+    #auxinfocsv file (v1 or v2) us akk bfi related to embry orientation used in naming the 'axis' e.g. ADL for c elegans cannonical orientation is combined with centroid and angle fields to define the AP axis for aligning cannonical division angles to this embryo in naming
+    #probably nothing else is used in current practice? v2 specifies 3D angle of embryo more flexibly, but is largely unused.
+    #see
+    
+    # dictionary giving the column indicies and descriptive data name in each AceTree timepoint file column
     aceTreeColumnDictionary={'cellIDAtTime':1,'valid':2, 'predecessorID':3, 'successorID1':4,
                             'successorID2':5, 'x':6, 'y':7, 'z':8,'diameter':9, 'name':10,
                             'meanintensity':11, 'intensity':12, 'intensitySummed':13, 'voxelCount':14,
@@ -61,7 +77,7 @@ class AceTreeReader:
     
     def readFiles(self,basepath,endtime):
         """
-        Loads a set of AceTree files into a networkx graph preserving all nuclei file columns as node attributes
+        Loads a set of AceTree files corresponding to an embryo into a networkx graph preserving all nuclei file columns as node attributes
         loads .xml (which specifies resolution and image location and auxinfo.csv (which specifies centroid and orientation for naming) attaches these as graph attributes
         Args:
             basepath (str): The path and root name of all3 files
@@ -80,7 +96,12 @@ class AceTreeReader:
         mygraph.graph.update(metadata)
         #todo check for Auxinfov2.csv with different semantics? very rare use case
         embryometadata=self.readAceTreeCSV(basepath+'AuxInfo.csv')
-        mygraph.graph.update(embryometadata)
+        if not embryometadata==None:
+            mygraph.graph.update(embryometadata)
+        else:
+            embryometadata=self.readAceTreeCSV(basepath+'AuxInfov2.csv')
+            if not embryometadata==None:
+                mygraph.graph.update(embryometadata)
         return mygraph
     
     def readAceTreeXML(self,filename):
@@ -93,10 +114,22 @@ class AceTreeReader:
         for elem in root.iter():
              if not list(elem):  # Check if the element has no children
                  leaf_tags[elem.tag]=elem.attrib
-
+        leaf_tags=dict(self.flatten(leaf_tags))
         return leaf_tags
 
     
+    def flatten(self,obj, prefix=[]):
+        if isinstance(obj, str):
+            yield ('_'.join(prefix), obj)
+    
+        elif isinstance(obj, list):
+            for o in obj:
+                yield from self.flatten(o, prefix) 
+        else:
+            for k, v in obj.items():
+                yield from self.flatten(v, prefix + [k])
+                
+            
     def readAceTreeCSV(self, filename):
         """
         Converts a CSV file with one data row and headers into a Python dictionary.
@@ -124,6 +157,18 @@ class AceTreeReader:
     
     #function for initializing detectiondatamanger from AceTree zip file
     def readAceTree(self,file,endtime):
+        """
+        parses Acetree.zip file
+    
+        Args:
+            file (str): The path and name of the .zip file
+            endtime (int): the time to load to (1 indexed)
+    
+        Returns:
+            Returns:
+                networkx.classes.graph.Graph: a graph representing the lineage data in the acetree file
+
+        """
         #add nodes
         acetreelineage=nx.Graph()
         addednodes={}#used to keep track of all unique in data nodes IDs and their acetree, unique per frame IDS
