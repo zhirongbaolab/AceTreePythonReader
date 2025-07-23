@@ -28,7 +28,8 @@ import warnings
 class AceTreeReader:
     """
       Loader that makes networkX graph from AceTree .zip file
-      see code for long commentary on obscure historical nature of fields
+      copies all fields unchanged and if metadata is loaded creates micron versions of all spatial fields
+      see code for long commentary on obscure nature of Acetree fields
       """
     #pasted below is the cannonical historical explanation of acetree column meanings
     #1(cell ID specific to this file, often, but not always the same as row number), 1(validity flag: 1 valid, 0 invalid (a cell deleted in acetree)), 
@@ -95,6 +96,13 @@ class AceTreeReader:
         metadata=self.readAceTreeXML(basepath+'.xml')
         if metadata==None:
             warnings.warn('Warning: No xml file cant find pixel resolution metadata')
+        
+        #else:
+            #to do:
+            #if have xml file lets try to dissect tiff name, its likely a slice that does not exist
+            #[historical acetree back compatiblity weirdness]
+            #take a stab at creating the real image name
+          
         #todo check for Auxinfov2.csv with different semantics? very rare use case
         embryometadata=self.readAceTreeCSV(basepath+'AuxInfo.csv')
         if  embryometadata==None:
@@ -112,8 +120,14 @@ class AceTreeReader:
         return mygraph
     
     def readAceTreeXML(self,filename):
-        #right now this just creates dictionary of top level entries
-        #to do flatten this really parsing each leaf
+        """
+        loads .xml (which specifies resolution and image location and auxinfo.csv (which specifies centroid and orientation for naming) attaches these as graph attributes
+        Args:
+           filename  (str): xml file to load
+          
+        Returns:
+            dict: flattened dict of xml elements
+        """
         leaf_tags={}
         tree = ET.parse(filename)
         root = tree.getroot()
