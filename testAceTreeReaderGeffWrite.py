@@ -14,7 +14,7 @@ from geff import write_nx
 
 
 myreader=AceTreeReader()
-endtime=100
+endtime=200
 basepath='Z:/bao_data_zrc/baolab/santella_DeepLearning/StarryniteIII/pythonAcetreeSupport/20140407_JIM113_SiO-0.15_1_s3_nobifurcation_trainingversion21_edited'
 graph=myreader.readFiles(basepath,endtime)
 #nx.draw(graph)
@@ -23,9 +23,10 @@ graph=myreader.readFiles(basepath,endtime)
 #note some gotchas, time is in frames in acetree, with frame rate not in metadata
 #often this is 1 minute (as in test data set) but it is also often 75 seconds, only can tell from microscope aquisition metadata if you have it or experimental notes
 
+#writing to top level of zar for now...
 # if there is no matching xml file for the basepath,the .zip will be loaded 
 #and have x,y,z,radius fields but without pixel sizes none of the _um properties will be added
-write_nx(graph, basepath+'.zarr/tracking_graph',
+write_nx(graph, basepath+'toplevell_200tp.zarr',
          axis_names=['t','x_um','y_um','z_um'],
          axis_units=['minute','micrometer','micrometer','micrometer'],
          axis_types=['time','space','space','space'])
